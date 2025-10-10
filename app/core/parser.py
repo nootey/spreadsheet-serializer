@@ -59,20 +59,14 @@ class SpreadsheetParser:
         if self.category_col_hint is not None:
             return df.columns[int(self.category_col_hint)]
 
-        header_row = df.iloc[header_row_idx]
         month_cols = set(month_map.values())
-        for col in df.columns:
-            if col in month_cols:
-                continue
-            head = ParsingUtils.normalize_text(header_row[col]).upper()
-            if head:
-                return col
-
         first_month_pos = min(df.columns.get_loc(c) for c in month_cols)
-        fallback_idx = max(0, first_month_pos - 1)
-        return df.columns[fallback_idx]
 
-    def parse(self, df: pd.DataFrame) -> List[Dict]:
+        # prefer the column right before the first month
+        preferred_idx = max(0, first_month_pos - 1)
+        return df.columns[preferred_idx]
+
+    def parse(self, df: pd.DataFrame, source_sheet: str | None = None) -> List[Dict]:
         df = df.copy()
         header_row_idx, month_map = self.find_header_row_and_month_map(df)
         if not month_map:
@@ -140,18 +134,36 @@ class SpreadsheetParser:
                     "description": ""
                 })
 
-        if self.debug:
-            by_kind = {}
+        if self.debug and source_sheet:
+            # lightweight per-sheet totals
+            from app.utils.exporting import ExportUtils
+            by_type = {}
             for r in records:
-                by_kind[r["transaction_type"]] = by_kind.get(r["transaction_type"], 0) + 1
-            print(f"DEBUG: record counts by kind: {by_kind}")
-            print(f"DEBUG: total records: {len(records)}")
-
+                by_type.setdefault(r["transaction_type"], []).append(r["amount"])
+            print(f"DEBUG: sheet '{source_sheet}' totals → " +
+                  ", ".join(f"{k}={ExportUtils.sum_as_str(v)}" for k, v in by_type.items()))
         return records
 
     def parse_excel_file(self, file_path: Path) -> List[Dict]:
-        df = pd.read_excel(file_path, engine="openpyxl", header=None, sheet_name=self.sheet_name)
-        return self.parse(df)
+        # Support single sheet, list of sheets, or ALL sheets
+        sn = self.sheet_name
+        if isinstance(sn, str) and sn.strip().upper() == "ALL":
+            sheet_arg = None  # pandas: None -> all sheets
+        else:
+            sheet_arg = sn
+
+        dfs = pd.read_excel(file_path, engine="openpyxl", header=None, sheet_name=sheet_arg)
+
+        # pandas returns a DataFrame for single sheet, or a dict[str|int, DataFrame] for multiple
+        if isinstance(dfs, pd.DataFrame):
+            return self.parse(dfs)
+
+        all_records: List[Dict] = []
+        for name, df in dfs.items():
+            if self.debug:
+                print(f"DEBUG: parsing sheet → {name}")
+            all_records.extend(self.parse(df, source_sheet=str(name)))
+        return all_records
 
     def export_to_json(self, records: List[Dict], output_path: Path) -> None:
         buckets: Dict[str, List[str]] = {}

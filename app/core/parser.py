@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from app.utils.month_resolver import MonthResolver
 from app.utils.parsing import ParsingUtils
+from app.utils.exporting import ExportUtils
 
 class SpreadsheetParser:
 
@@ -29,6 +31,7 @@ class SpreadsheetParser:
         self.section_kind: Dict[str, str] = {p: k for p, k in self.section_prefixes}
 
         self.ignored_row_prefixes = set(x.upper() for x in config.get("ignored_prefixes", []))
+        self.ignored_row_exact = set(x.upper() for x in config.get("ignored_exact", []))
 
 
     def detect_section(self, label: object) -> Optional[str]:
@@ -39,7 +42,7 @@ class SpreadsheetParser:
             return "NET OSTANEK"
         for prefix, _kind in self.section_prefixes:
             if t.startswith(prefix.upper()):
-                return prefix  # canonical key used in section_kind
+                return prefix
         return None
 
     def find_header_row_and_month_map(
@@ -103,7 +106,8 @@ class SpreadsheetParser:
                 section = sec
                 txn_type = self.section_kind.get(section)
                 if self.debug:
-                    print(f"DEBUG: section at row {ridx}: '{ParsingUtils.normalize_text(first_cell)}' → {section} ({txn_type})")
+                    print(
+                        f"DEBUG: section at row {ridx}: '{ParsingUtils.normalize_text(first_cell)}' → {section} ({txn_type})")
                 if section == "NET OSTANEK":
                     break
                 continue
@@ -111,10 +115,16 @@ class SpreadsheetParser:
             if txn_type is None:
                 continue
 
-            desc = ParsingUtils.normalize_text(first_cell)
-            if not desc:
+            label = ParsingUtils.normalize_text(first_cell)
+            if not label:
                 continue
-            if any(desc.upper().startswith(p) for p in self.ignored_row_prefixes):
+
+            u = label.upper()
+            # exact match ignore, without catching partial columns
+            if u in self.ignored_row_exact:
+                continue
+            # prefix ignore
+            if any(u.startswith(p) for p in self.ignored_row_prefixes):
                 continue
 
             for month_idx, col in month_map.items():
@@ -125,10 +135,9 @@ class SpreadsheetParser:
                     "transaction_type": txn_type,
                     "amount": f"{amount:.2f}",
                     "currency": "EUR",
-                    "txn_date": f"{self.year}-{month_idx:02d}-01",
-                    "description": desc,
-                    "section": section,
-                    "month": month_idx
+                    "txn_date": f"{self.year}-{month_idx:02d}-01T00:00:00Z",
+                    "category": label,
+                    "description": ""
                 })
 
         if self.debug:
@@ -145,9 +154,25 @@ class SpreadsheetParser:
         return self.parse(df)
 
     def export_to_json(self, records: List[Dict], output_path: Path) -> None:
+        buckets: Dict[str, List[str]] = {}
+        for r in records:
+            buckets.setdefault(r["transaction_type"], []).append(r["amount"])
+
+        totals = {k: ExportUtils.sum_as_str(vs) for k, vs in buckets.items()}
+        if buckets:
+            totals["ALL"] = ExportUtils.sum_as_str(sum(buckets.values(), []))
+
+        payload = {
+            "year": self.year,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "totals": totals,
+            "transactions": records
+        }
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
         print(f"Wrote {len(records)} transactions → {output_path}")
 
 

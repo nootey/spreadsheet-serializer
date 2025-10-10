@@ -1,10 +1,10 @@
-# main.py
 from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
 
 from app.core.parser import SpreadsheetParser, load_config
+from app.utils.exporting import ExportUtils
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Serialize budget spreadsheet year → JSON")
@@ -27,10 +27,34 @@ def main() -> int:
     config["year"] = args.year
 
     parser = SpreadsheetParser(config)
-    records = parser.parse_excel_file(xlsx_path)
-    parser.export_to_json(records, out_path)
 
-    print(f"OK → {out_path}")
+    try:
+        records = parser.parse_excel_file(xlsx_path)
+    except Exception as e:
+        print(f"ERR: Failed to parse Excel: {e}", file=sys.stderr)
+        return 3
+
+    if not records:
+        print("ERR: No transactions parsed. Check header detection/month map/sheet name.", file=sys.stderr)
+        return 4
+
+    actual_totals = ExportUtils.totals_from_records(records)
+    expected_totals = config.get("expected_totals") or {}
+    policy = (config.get("mismatch_policy") or "fail").lower()
+
+    ok, report_lines = ExportUtils.validate_totals(actual_totals, expected_totals, policy)
+    for line in report_lines:
+        print(line)
+    if not ok:
+        return 5
+
+    try:
+        parser.export_to_json(records, out_path)
+    except Exception as e:
+        print(f"ERR: Failed to write output: {e}", file=sys.stderr)
+        return 6
+
+    print(f"Output saved to: {out_path}")
     return 0
 
 if __name__ == "__main__":

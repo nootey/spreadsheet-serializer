@@ -173,7 +173,7 @@ class SpreadsheetParser:
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        print(f"Wrote {len(records)} transactions → {output_path}")
+        print(f"Wrote {len(records)} transactions")
 
 
 def load_config(path: Path) -> Dict:

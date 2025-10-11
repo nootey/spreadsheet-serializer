@@ -32,7 +32,30 @@ class SpreadsheetParser:
 
         self.ignored_row_prefixes = set(x.upper() for x in config.get("ignored_prefixes", []))
         self.ignored_row_exact = set(x.upper() for x in config.get("ignored_exact", []))
+        self.used_col_aliases = set(x.upper() for x in config.get("used_col_aliases", ["USED"]))
 
+    def _find_used_column(self, df: pd.DataFrame, header_row_idx: int):
+        max_rows = min(self.header_scan_rows, len(df))
+        for c in df.columns:
+            t = ParsingUtils.normalize_text(df.iloc[header_row_idx][c]).upper()
+            if t in self.used_col_aliases:
+                return c
+
+        start = max(0, header_row_idx - 2)
+        end = min(len(df), header_row_idx + 3)
+        for r in range(start, end):
+            for c in df.columns:
+                t = ParsingUtils.normalize_text(df.iloc[r][c]).upper()
+                if t in self.used_col_aliases:
+                    return c
+
+        for r in range(max_rows):
+            for c in df.columns:
+                t = ParsingUtils.normalize_text(df.iloc[r][c]).upper()
+                if t in self.used_col_aliases:
+                    return c
+
+        return None
 
     def detect_section(self, label: object) -> Optional[str]:
         t = ParsingUtils.normalize_text(label).upper()
@@ -62,7 +85,6 @@ class SpreadsheetParser:
         month_cols = set(month_map.values())
         first_month_pos = min(df.columns.get_loc(c) for c in month_cols)
 
-        # prefer the column right before the first month
         preferred_idx = max(0, first_month_pos - 1)
         return df.columns[preferred_idx]
 
@@ -82,6 +104,14 @@ class SpreadsheetParser:
             print(f"DEBUG: month_map (month→col)={dbg_months}")
             print(f"DEBUG: category_col idx={df.columns.get_loc(category_col)} "
                   f"header_cell='{ParsingUtils.normalize_text(df.iloc[header_row_idx][category_col])}'")
+
+        used_col = self._find_used_column(df, header_row_idx)
+        if self.debug:
+            if used_col is None:
+                print("DEBUG: used_col not found within header scan area.")
+            else:
+                print(f"DEBUG: used_col idx={df.columns.get_loc(used_col)} "
+                      f"header_cell='{ParsingUtils.normalize_text(df.iloc[header_row_idx][used_col])}'")
 
         initial_label = df.iloc[header_row_idx][category_col]
         section = self.detect_section(initial_label)
@@ -114,14 +144,18 @@ class SpreadsheetParser:
                 continue
 
             u = label.upper()
-            # exact match ignore, without catching partial columns
             if u in self.ignored_row_exact:
                 continue
-            # prefix ignore
             if any(u.startswith(p) for p in self.ignored_row_prefixes):
                 continue
+            if u in {"TOTAL"}:
+                continue  # <-- Skip total rows
 
             for month_idx, col in month_map.items():
+                header_val = ParsingUtils.normalize_text(df.iloc[header_row_idx][col]).upper()
+                if "LAST" in header_val and "YEAR" in header_val:
+                    continue
+
                 amount = ParsingUtils.coerce_amount(row[col])
                 if amount is None:
                     continue
@@ -133,6 +167,19 @@ class SpreadsheetParser:
                     "category": label,
                     "description": ""
                 })
+
+            if txn_type == "savings" and used_col is not None:
+                used_amt = ParsingUtils.coerce_amount(row[used_col])
+                if used_amt is not None and abs(used_amt) > 1e-9:
+                    used_amt = -abs(used_amt)
+                    records.append({
+                        "transaction_type": "savings",
+                        "amount": f"{used_amt:.2f}",
+                        "currency": "EUR",
+                        "txn_date": f"{self.year}-12-31T00:00:00Z",
+                        "category": label,
+                        "description": "USED"
+                    })
 
         if self.debug and source_sheet:
             # lightweight per-sheet totals

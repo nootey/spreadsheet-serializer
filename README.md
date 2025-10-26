@@ -90,6 +90,5 @@ This is an example output. It gets generated into `./output/{year}.json`
       "description": ""
     }
   ],
-  "categories": []
 }
 ```

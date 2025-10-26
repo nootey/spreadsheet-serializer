@@ -213,26 +213,27 @@ class SpreadsheetParser:
         return all_records
 
     def export_to_json(self, records: List[Dict], output_path: Path) -> None:
-        buckets: Dict[str, List[str]] = {}
-        for r in records:
-            buckets.setdefault(r["transaction_type"], []).append(r["amount"])
-
-        totals = {k: ExportUtils.sum_as_str(vs) for k, vs in buckets.items()}
-        if buckets:
-            totals["ALL"] = ExportUtils.sum_as_str(sum(buckets.values(), []))
+        transactions = [
+            r for r in records
+            if r.get("transaction_type") in {"income", "expense"}
+        ]
+        transfers = [
+            r for r in records
+            if r.get("transaction_type") == "investments"
+        ]
 
         payload = {
-            "year": self.year,
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "totals": totals,
-            "transactions": records
+            "transactions": transactions,
+            "transfers": transfers,
+            "categories": []
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        print(f"Wrote {len(records)} transactions")
+        print(f"Wrote {len(transactions)} transactions, {len(transfers)} transfers")
 
 
 def load_config(path: Path) -> Dict:

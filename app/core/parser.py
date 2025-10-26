@@ -8,7 +8,6 @@ import pandas as pd
 
 from app.utils.month_resolver import MonthResolver
 from app.utils.parsing import ParsingUtils
-from app.utils.exporting import ExportUtils
 
 class SpreadsheetParser:
 
@@ -226,7 +225,6 @@ class SpreadsheetParser:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "transactions": transactions,
             "transfers": transfers,
-            "categories": []
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

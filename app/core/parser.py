@@ -320,7 +320,16 @@ class SpreadsheetParser:
             if r.get("transaction_type") == "repayments"
         ]
 
+        # Parse filename to create identifier
+        filename = output_path.stem
+        if filename.startswith("crypto-"):
+            year = filename.split("-")[1]
+            identifier = f"crypto_{year}"
+        else:
+            identifier = f"fiat_{filename}"
+
         payload = {
+            "identifier": identifier,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "transactions": transactions,
             "investments": investments,

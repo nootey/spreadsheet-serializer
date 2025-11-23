@@ -9,12 +9,18 @@ from app.utils.exporting import ExportUtils
 def main() -> int:
     ap = argparse.ArgumentParser(description="Serialize budget spreadsheet year → JSON")
     ap.add_argument("year", type=int, help="e.g. 2022")
+    ap.add_argument("-crypto", action="store_true", help="Parse crypto transactions instead")
     args = ap.parse_args()
 
     base = Path(__file__).resolve().parent
-    xlsx_path = base / "input" / f"{args.year}.xlsx"
-    cfg_path  = base / "input" / f"{args.year}.json"
-    out_path  = base / "output" / f"{args.year}.json"
+    if args.crypto:
+        xlsx_path = base / "input" / f"crypto-{args.year}.xlsx"
+        cfg_path = base / "input" / f"crypto-{args.year}.json"
+        out_path = base / "output" / f"crypto-{args.year}.json"
+    else:
+        xlsx_path = base / "input" / f"{args.year}.xlsx"
+        cfg_path = base / "input" / f"{args.year}.json"
+        out_path = base / "output" / f"{args.year}.json"
 
     if not xlsx_path.exists():
         print(f"ERR: XLSX not found: {xlsx_path}", file=sys.stderr)
@@ -26,10 +32,13 @@ def main() -> int:
     config = load_config(cfg_path)
     config["year"] = args.year
 
-    parser = SpreadsheetParser(config)
+    parser = SpreadsheetParser(config, simplified=args.crypto)
 
     try:
-        records = parser.parse_excel_file(xlsx_path)
+        if args.crypto:
+            records = parser.parse_crypto_excel_file(xlsx_path)
+        else:
+            records = parser.parse_excel_file(xlsx_path)
     except Exception as e:
         print(f"ERR: Failed to parse Excel: {e}", file=sys.stderr)
         return 3

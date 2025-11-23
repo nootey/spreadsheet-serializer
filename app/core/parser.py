@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import string
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -11,27 +12,36 @@ from app.utils.parsing import ParsingUtils
 
 class SpreadsheetParser:
 
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, simplified: bool = False):
         self.year: int = int(config["year"])
         self.sheet_name = config.get("sheet_name", 0)
         self.header_scan_rows: int = int(config.get("header_scan_rows", 12))
         self.category_col_hint = config.get("category_col_hint", None)
         self.debug: bool = bool(config.get("debug", False))
+        self.simplified = simplified
 
-        months_cfg = config.get("months")
-        self.months = MonthResolver(months_cfg)
+        if simplified:
+            # Crypto-specific config
+            self.crypto_columns = config.get("crypto_columns", {
+                "date": "Date",
+                "coin": "Coin",
+                "profit_loss": "Profit/Loss"
+            })
+        else:
+            months_cfg = config.get("months")
+            self.months = MonthResolver(months_cfg)
 
-        cfg_sec = config.get("section_prefixes") or []
-        if not cfg_sec:
-            raise ValueError("Config must include 'section_prefixes' list")
-        self.section_prefixes: List[Tuple[str, str]] = [
-            (str(p).strip(), str(k).strip()) for p, k in cfg_sec
-        ]
-        self.section_kind: Dict[str, str] = {p: k for p, k in self.section_prefixes}
+            cfg_sec = config.get("section_prefixes") or []
+            if not cfg_sec:
+                raise ValueError("Config must include 'section_prefixes' list")
+            self.section_prefixes: List[Tuple[str, str]] = [
+                (str(p).strip(), str(k).strip()) for p, k in cfg_sec
+            ]
+            self.section_kind: Dict[str, str] = {p: k for p, k in self.section_prefixes}
 
-        self.ignored_row_prefixes = set(x.upper() for x in config.get("ignored_prefixes", []))
-        self.ignored_row_exact = set(x.upper() for x in config.get("ignored_exact", []))
-        self.used_col_aliases = set(x.upper() for x in config.get("used_col_aliases", ["USED"]))
+            self.ignored_row_prefixes = set(x.upper() for x in config.get("ignored_prefixes", []))
+            self.ignored_row_exact = set(x.upper() for x in config.get("ignored_exact", []))
+            self.used_col_aliases = set(x.upper() for x in config.get("used_col_aliases", ["USED"]))
 
     def _find_used_column(self, df: pd.DataFrame, header_row_idx: int):
         max_rows = min(self.header_scan_rows, len(df))
@@ -210,6 +220,87 @@ class SpreadsheetParser:
                 print(f"DEBUG: parsing sheet → {name}")
             all_records.extend(self.parse(df, source_sheet=str(name)))
         return all_records
+
+    def parse_crypto_excel_file(self, file_path: Path) -> List[Dict]:
+        df = pd.read_excel(file_path, engine="openpyxl", sheet_name=0, header=None)
+
+        # Find the header row
+        date_col_name = self.crypto_columns["date"]
+        header_row_idx = None
+
+        for r in range(min(self.header_scan_rows, len(df))):
+            for c in df.columns:
+                cell_val = ParsingUtils.normalize_text(df.iloc[r][c])
+                if cell_val.upper() == date_col_name.upper():
+                    header_row_idx = r
+                    break
+            if header_row_idx is not None:
+                break
+
+        if header_row_idx is None:
+            if self.debug:
+                print(f"DEBUG: Could not find header row with '{date_col_name}' column")
+            return []
+
+        df.columns = [ParsingUtils.normalize_text(col) for col in df.iloc[header_row_idx]]
+        df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
+
+        df = df[df.iloc[:, df.columns.get_loc(self.crypto_columns["date"])] != self.crypto_columns["date"]]
+        df = df.reset_index(drop=True)
+
+        if self.debug:
+            print(f"DEBUG: Columns: {df.columns.tolist()}")
+            print(f"DEBUG: First few data rows:")
+            print(df.head())
+
+        records: List[Dict] = []
+
+        date_col = self.crypto_columns["date"]
+        coin_col = self.crypto_columns["coin"]
+        pl_col = self.crypto_columns["profit_loss"]
+
+        for idx, row in df.iterrows():
+            date_val = row.get(date_col)
+            profit_loss = ParsingUtils.coerce_amount(row.get(pl_col))
+            coin = ParsingUtils.normalize_text(row.get(coin_col, ""))
+            coin = coin.rstrip(string.digits)
+
+            if self.debug:
+                print(f"DEBUG: Row {idx}: date={date_val}, profit_loss={profit_loss}, coin={coin}")
+
+            if pd.isna(date_val) or profit_loss is None or pd.isna(profit_loss):
+                if self.debug:
+                    print(f"DEBUG: Skipping row {idx} - missing date or profit/loss")
+                continue
+
+            # Parse date
+            if isinstance(date_val, datetime):
+                txn_date = date_val.strftime("%Y-%m-%dT00:00:00Z")
+            else:
+                try:
+                    parsed = pd.to_datetime(str(date_val), dayfirst=True)
+                    txn_date = parsed.strftime("%Y-%m-%dT00:00:00Z")
+                except Exception as e:
+                    if self.debug:
+                        print(f"DEBUG: Failed to parse date: {date_val}, error: {e}")
+                    continue
+
+            txn_type = "income" if profit_loss > 0 else "expense"
+            amount = abs(profit_loss)
+
+            records.append({
+                "transaction_type": txn_type,
+                "amount": f"{amount:.2f}",
+                "currency": "EUR",
+                "txn_date": txn_date,
+                "category": f"Crypto PNL" if coin else "Crypto",
+                "description": f"Profit/Loss from {coin}" if coin else "Crypto trading"
+            })
+
+        if self.debug:
+            print(f"DEBUG: Parsed {len(records)} crypto transactions")
+
+        return records
 
     def export_to_json(self, records: List[Dict], output_path: Path) -> None:
         transactions = [

@@ -53,8 +53,8 @@ def main() -> int:
             if abs(float(actual_totals.get(k, 0)) - float(v)) > 0.01
         ]
 
-        if mismatched == ["savings"] or mismatched == []:
-            print("NOTE: Ignoring savings mismatch, continuing export...")
+        if not mismatched:
+            print("NOTE: Ignoring mismatch, continuing export...")
         else:
             return 5
 

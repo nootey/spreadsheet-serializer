@@ -224,19 +224,24 @@ class SpreadsheetParser:
             r for r in records
             if r.get("transaction_type") == "savings"
         ]
+        repayments = [
+            r for r in records
+            if r.get("transaction_type") == "repayments"
+        ]
 
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "transactions": transactions,
             "investments": investments,
             "savings": savings,
+            "repayments": repayments,
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        print(f"Wrote {len(transactions)} transactions, {len(investments)} investment transfers, {len(savings)} savings transfers")
+        print(f"Wrote {len(transactions)} transactions, {len(investments)} investment transfers, {len(savings)} savings transfers, {len(repayments)} debt repayments")
 
 
 def load_config(path: Path) -> Dict:

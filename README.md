@@ -12,7 +12,7 @@ Here is a sample input file, that needs to be placed in `./input/{year}.json`
 {
   "year": 2025,
 
-  "sheet_name": ["Inflows","Outflows","Investments"],
+  "sheet_name": ["Inflows","Outflows","Investments", "Repayments"],
 
   "header_scan_rows": 12,
   "category_col_hint": null,
@@ -37,7 +37,9 @@ Here is a sample input file, that needs to be placed in `./input/{year}.json`
     ["Inflow", "income"],
     ["Outflows fixed", "expense"],
     ["Outflows variable", "expense"],
-    ["Investments", "investments"]
+    ["Investments", "investments"],
+    ["Savings", "savings"],
+    ["Repayments", "repayments"]
   ],
 
   "ignored_prefixes": ["Stat", "Category", "Rate"],
@@ -49,7 +51,8 @@ Here is a sample input file, that needs to be placed in `./input/{year}.json`
     "income":      "100.00",
     "expense":     "50.00",
     "savings":     "0.00",
-    "investments": "1000.00"
+    "investments": "1000.00",
+    "repayments": "500.00"
   },
   "mismatch_policy": "fail"
 }
@@ -80,7 +83,7 @@ This is an example output. It gets generated into `./output/{year}.json`
       "description": ""
     }
   ],
-  "transfers": [
+  "investments": [
     {
       "transaction_type": "investments",
       "amount": "1000.00",
@@ -90,5 +93,18 @@ This is an example output. It gets generated into `./output/{year}.json`
       "description": ""
     }
   ],
+  "savings": [
+
+  ],
+  "repayment": [
+    {
+      "transaction_type": "repayments",
+      "amount": "500.00",
+      "currency": "EUR",
+      "txn_date": "2025-03-01T00:00:00Z",
+      "category": "Personal loan",
+      "description": ""
+    }
+  ]
 }
 ```

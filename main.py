@@ -10,6 +10,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Serialize budget spreadsheet year → JSON")
     ap.add_argument("year", type=int, help="e.g. 2022")
     ap.add_argument("-crypto", action="store_true", help="Parse crypto transactions instead")
+    ap.add_argument("-stonks", action="store_true", help="Parse stock trades instead")
     args = ap.parse_args()
 
     base = Path(__file__).resolve().parent
@@ -17,10 +18,17 @@ def main() -> int:
         xlsx_path = base / "input" / f"crypto-{args.year}.xlsx"
         cfg_path = base / "input" / f"crypto-{args.year}.json"
         out_path = base / "output" / f"crypto-{args.year}.json"
+        parse_mode = "crypto"
+    elif args.stonks:
+        xlsx_path = base / "input" / f"stonks-{args.year}.xlsx"
+        cfg_path = base / "input" / f"stonks-{args.year}.json"
+        out_path = base / "output" / f"stonks-{args.year}.json"
+        parse_mode = "stonks"
     else:
         xlsx_path = base / "input" / f"{args.year}.xlsx"
         cfg_path = base / "input" / f"{args.year}.json"
         out_path = base / "output" / f"{args.year}.json"
+        parse_mode = "normal"
 
     if not xlsx_path.exists():
         print(f"ERR: XLSX not found: {xlsx_path}", file=sys.stderr)
@@ -32,11 +40,13 @@ def main() -> int:
     config = load_config(cfg_path)
     config["year"] = args.year
 
-    parser = SpreadsheetParser(config, simplified=args.crypto)
+    parser = SpreadsheetParser(config, simplified=(args.crypto or args.stonks))
 
     try:
-        if args.crypto:
+        if parse_mode == "crypto":
             records = parser.parse_crypto_excel_file(xlsx_path)
+        elif parse_mode == "stonks":
+            records = parser.parse_stonks_excel_file(xlsx_path)
         else:
             records = parser.parse_excel_file(xlsx_path)
     except Exception as e:

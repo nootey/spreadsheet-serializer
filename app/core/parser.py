@@ -22,7 +22,7 @@ class SpreadsheetParser:
 
         if simplified:
             # Crypto-specific config
-            self.crypto_columns = config.get("crypto_columns", {
+            self.alt_columns = config.get("columns", {
                 "date": "Date",
                 "coin": "Coin",
                 "profit_loss": "Profit/Loss"
@@ -225,7 +225,7 @@ class SpreadsheetParser:
         df = pd.read_excel(file_path, engine="openpyxl", sheet_name=0, header=None)
 
         # Find the header row
-        date_col_name = self.crypto_columns["date"]
+        date_col_name = self.alt_columns["date"]
         header_row_idx = None
 
         for r in range(min(self.header_scan_rows, len(df))):
@@ -245,7 +245,7 @@ class SpreadsheetParser:
         df.columns = [ParsingUtils.normalize_text(col) for col in df.iloc[header_row_idx]]
         df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
 
-        df = df[df.iloc[:, df.columns.get_loc(self.crypto_columns["date"])] != self.crypto_columns["date"]]
+        df = df[df.iloc[:, df.columns.get_loc(self.alt_columns["date"])] != self.alt_columns["date"]]
         df = df.reset_index(drop=True)
 
         if self.debug:
@@ -255,9 +255,9 @@ class SpreadsheetParser:
 
         records: List[Dict] = []
 
-        date_col = self.crypto_columns["date"]
-        coin_col = self.crypto_columns["coin"]
-        pl_col = self.crypto_columns["profit_loss"]
+        date_col = self.alt_columns["date"]
+        coin_col = self.alt_columns["coin"]
+        pl_col = self.alt_columns["profit_loss"]
 
         for idx, row in df.iterrows():
             date_val = row.get(date_col)
@@ -302,6 +302,84 @@ class SpreadsheetParser:
 
         return records
 
+    def parse_stonks_excel_file(self, file_path: Path) -> List[Dict]:
+        df = pd.read_excel(file_path, engine="openpyxl", sheet_name=0, header=None)
+
+        # Find the header row
+        header_row_idx = None
+        for r in range(min(self.header_scan_rows, len(df))):
+            for c in df.columns:
+                cell_val = ParsingUtils.normalize_text(df.iloc[r][c])
+                if cell_val.upper() == "TICKER":
+                    header_row_idx = r
+                    break
+            if header_row_idx is not None:
+                break
+
+        if header_row_idx is None:
+            if self.debug:
+                print("DEBUG: Could not find header row with 'Ticker' column")
+            return []
+
+        df.columns = [ParsingUtils.normalize_text(col) for col in df.iloc[header_row_idx]]
+        df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
+
+        if self.debug:
+            print(f"DEBUG: Columns: {df.columns.tolist()}")
+            print(f"DEBUG: First few data rows:")
+            print(df.head())
+
+        records: List[Dict] = []
+
+        date_col = self.alt_columns.get("date", "Purchase date")
+        ticker_col = self.alt_columns.get("ticker", "Ticker")
+        value_col = self.alt_columns.get("value", "Value on buy")
+        fee_col = self.alt_columns.get("fee", "Fee")
+
+        for idx, row in df.iterrows():
+            date_val = row.get(date_col)
+            ticker = ParsingUtils.normalize_text(row.get(ticker_col, ""))
+            value = ParsingUtils.coerce_amount(row.get(value_col))
+            fee = ParsingUtils.coerce_amount(row.get(fee_col))
+
+            if self.debug:
+                print(f"DEBUG: Row {idx}: date={date_val}, ticker={ticker}, value={value}, fee={fee}")
+
+            if pd.isna(date_val) or value is None or pd.isna(value):
+                if self.debug:
+                    print(f"DEBUG: Skipping row {idx} - missing date or value")
+                continue
+
+            # Parse date
+            if isinstance(date_val, datetime):
+                txn_date = date_val.strftime("%Y-%m-%dT00:00:00Z")
+            else:
+                try:
+                    parsed = pd.to_datetime(str(date_val), dayfirst=True)
+                    txn_date = parsed.strftime("%Y-%m-%dT00:00:00Z")
+                except Exception as e:
+                    if self.debug:
+                        print(f"DEBUG: Failed to parse date: {date_val}, error: {e}")
+                    continue
+
+            amount = abs(value)
+            fee_str = f"{abs(fee):.2f}" if fee and not pd.isna(fee) else "0.00"
+
+            records.append({
+                "transaction_type": "buy",
+                "amount": f"{amount:.2f}",
+                "fee": fee_str,
+                "currency": "EUR",
+                "txn_date": txn_date,
+                "category": f"{ticker}",
+                "description": ""
+            })
+
+        if self.debug:
+            print(f"DEBUG: Parsed {len(records)} stonks transactions")
+
+        return records
+
     def export_to_json(self, records: List[Dict], output_path: Path) -> None:
         transactions = [
             r for r in records
@@ -325,6 +403,9 @@ class SpreadsheetParser:
         if filename.startswith("crypto-"):
             year = filename.split("-")[1]
             identifier = f"crypto_{year}"
+        elif filename.startswith("stonks-"):
+            year = filename.split("-")[1]
+            identifier = f"stonks_{year}"
         else:
             identifier = f"fiat_{filename}"
 
@@ -337,11 +418,20 @@ class SpreadsheetParser:
             "repayments": repayments,
         }
 
+        if filename.startswith("stonks-"):
+            trades = [
+                r for r in records
+                if r.get("transaction_type") in {"buy", "sell"}
+            ]
+            payload["trades"] = trades
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        print(f"Wrote {len(transactions)} transactions, {len(investments)} investment transfers, {len(savings)} savings transfers, {len(repayments)} debt repayments")
+        trades_msg = f", {len(payload.get('trades', []))} trades" if "trades" in payload else ""
+        print(
+            f"Wrote {len(transactions)} transactions, {len(investments)} investment transfers, {len(savings)} savings transfers, {len(repayments)} debt repayments{trades_msg}")
 
 
 def load_config(path: Path) -> Dict:

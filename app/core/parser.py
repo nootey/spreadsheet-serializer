@@ -333,21 +333,21 @@ class SpreadsheetParser:
 
         date_col = self.alt_columns.get("date", "Purchase date")
         ticker_col = self.alt_columns.get("ticker", "Ticker")
-        value_col = self.alt_columns.get("value", "Value on buy")
+        amount_col = self.alt_columns.get("amount", "Amount")
         fee_col = self.alt_columns.get("fee", "Fee")
 
         for idx, row in df.iterrows():
             date_val = row.get(date_col)
             ticker = ParsingUtils.normalize_text(row.get(ticker_col, ""))
-            value = ParsingUtils.coerce_amount(row.get(value_col))
+            amount = ParsingUtils.coerce_amount(row.get(amount_col))
             fee = ParsingUtils.coerce_amount(row.get(fee_col))
 
             if self.debug:
-                print(f"DEBUG: Row {idx}: date={date_val}, ticker={ticker}, value={value}, fee={fee}")
+                print(f"DEBUG: Row {idx}: date={date_val}, ticker={ticker}, amount={amount}, fee={fee}")
 
-            if pd.isna(date_val) or value is None or pd.isna(value):
+            if pd.isna(date_val) or amount is None or pd.isna(amount):
                 if self.debug:
-                    print(f"DEBUG: Skipping row {idx} - missing date or value")
+                    print(f"DEBUG: Skipping row {idx} - missing date or amount")
                 continue
 
             # Parse date
@@ -362,12 +362,12 @@ class SpreadsheetParser:
                         print(f"DEBUG: Failed to parse date: {date_val}, error: {e}")
                     continue
 
-            amount = abs(value)
+            amount = abs(amount)
             fee_str = f"{abs(fee):.2f}" if fee and not pd.isna(fee) else "0.00"
 
             records.append({
                 "transaction_type": "buy",
-                "amount": f"{amount:.2f}",
+                "amount": f"{amount:.6f}",
                 "fee": fee_str,
                 "currency": "EUR",
                 "txn_date": txn_date,
